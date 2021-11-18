@@ -1,0 +1,5 @@
+*/auth.json
+out/*
+node_modules/*
+*.swp
+*.swo

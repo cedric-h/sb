@@ -1,0 +1,12 @@
+{
+  "scripts": {
+    "build": "tsc -p . && rsync -az -i ~/.ssh/id_ed25519 ./out/ ubuntu@150.136.254.91:bot/out",
+    "watch": "nodemon -w ./src/ --exec \"npm run build\" --ext ts,json"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.7"
+  },
+  "dependencies": {
+    "@slack/bolt": "^3.8.1"
+  }
+}
