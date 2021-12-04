@@ -169,7 +169,6 @@ export default async (app: App, respond: RespondFn, _user: string, selfCall: boo
       }
     }
 
-    console.log(txt);
     return txt;
   })());
 };
