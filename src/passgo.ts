@@ -1,174 +1,139 @@
-import { sum, serialize, deserialize, normUserId, ids } from "./utils";
+import { App } from '@slack/bolt';
 import { Reaction } from "@slack/web-api/dist/response/ConversationsHistoryResponse";
 import { RespondFn } from "@slack/bolt/dist/types/utilities";
-import { App } from "@slack/bolt";
-import fs from "fs";
+import { Figurine, FigKind, writeBank, ppcents, getAccount, Account } from "./account";
+import * as ships from "./ships";
+import { normUserId, sum } from "./utils";
 
-/* we're taking reactions out of the context of their original message,
- * so there's some of that context that we need to save */
-type React = Reaction & { msg: string };
+/* this file's dependency on account.ts and manifest.ts is ... primarily
+ * a historical artifact, probably. if it turns out harmful, it can easily
+ * be remedied in a subsequent reorganization. not sure why it would though?
+ *
+ * it updates what your account has recorded about your ships with what
+ * slack is saying, printing out an update describing what that entailed. */
 
-/* gives you a cached shipmoji if it's still pipin' hot, otherwise buckle in because
- * we're fetching a new one for ya!
- * 
- * the #1 goal is to return relevant info, the #2 goal is to not refresh unless there
- * is a need to do so. */
-const shipmoji: ((app: App) => Promise<Map<string, React[]>>) = (() => {
-  let shipmoji: Map<string, React[]>,
-      lastCache: number;
+const figurineChance = (account: Account, acc: number, emoji: string, users: string[]) => {
+  const figs = [];
 
-  const file = "../shipmojiCache.json";
-  try {
-    ({ lastCache, shipmoji } = deserialize(fs.readFileSync(file, "utf-8")));
-  } catch(e) {
-    console.log("couldn't find " + file + ": " + e);
+  /* you're x5 more likely to get a figurine if you haven't earned over 100sc */
+  const baseChance = 0.018;
+  const chance = (acc < 100) ? baseChance : (baseChance/5);
+
+  if (Math.random() < chance)
+    figs.push({ kind: FigKind.Emoji, id: emoji });
+  if (Math.random() < chance) {
+    const randomHackerId = users[Math.floor(Math.random() * users.length)];
+    figs.push({ kind: FigKind.Hacker, id: randomHackerId });
   }
 
-  const fetchShipmoji = async (app: App) => {
-    console.log("fetching shipmoji ...");
+  account.figurines.push(...figs);
+  return figs;
+}
 
-    shipmoji = new Map();
-    lastCache = Date.now();
+export default async (app: App, respond: RespondFn, user: string) => {
+  const account = getAccount(user);
+  const moji = (await ships.moji(app)).get(user) ?? [];
+  /* slack uses timestamps as ids */
+  moji.sort((a, b) => parseFloat(a.msg) - parseFloat(b.msg));
 
-    for (let res, cursor; !res || res.has_more; cursor = res.response_metadata!.next_cursor!) {
-      res = await app.client.conversations.history({
-        channel: ids.ship,
-        limit: 1000,
-        /* cutoff point: https://hackclub.slack.com/archives/C0M8PUPU6/p1564202710161200 
-         * (seemed like people actually kept ship threaded after that point) */
-        oldest: "1564202710.161200",
-        cursor,
-      });
-      if (!res.ok) throw new Error(res.error!);
-
-      for (const msg of res.messages!) {
-        /* we can't find the most popular reaction on reactionless messages */
-        if (!msg.reactions || msg.reactions.length == 0) continue;
-
-        const user = `<@${msg.user!}>`;
-        const userShipmoji = shipmoji.get(user) ?? [];
-
-        /* push only the most popular reaction */
-        const reacts = msg.reactions.reduce((a, x) => (x.count! > a.count!) ? x : a);
-        userShipmoji.push(Object.assign(reacts, { msg: msg.ts! }));
-
-        shipmoji.set(user, userShipmoji);
-      }
-    }
-
-    fs.writeFileSync(file, serialize({ lastCache, shipmoji }), "utf-8");
-
-    return shipmoji;
-  };
-
-  return async (app: App) => {
-    if (shipmoji == undefined || (Date.now() - lastCache) > 36e5)
-      shipmoji = await fetchShipmoji(app);
-    return shipmoji;
-  };
-})();
-
-export default async (app: App, respond: RespondFn, _user: string, selfCall: boolean) => {
-  const user = ["all", "global", "<!everyone>"].includes(_user) ? null : normUserId(_user);
-
-  /* parse out the shipmoji data we actually need for this query */
-  const allmoji = await shipmoji(app);
-  const moji = (user == null) ? [...allmoji.values()].flat() : (allmoji.get(user) ?? []);
-
-  /* bail if there's no relevant data */
   if (moji.length == 0)
-    if (selfCall)
-      return await respond(
-        "looks like you haven't shipped anything yet, " +
-        "or your ships haven't received any reactions.\n\n" +
-        `post something cool you've made in <#${ids.ship}>, ` +
-        "and the scales may yet tip in your favor!"
-      );
-    else
-      return await respond(
-        `looks like ${user} hasn't shipped anything yet, ` +
-        "or their ships haven't received any reactions.\n\n" +
-        `perhaps if they post something cool they've made in <#${ids.ship}>, ` +
-        "the scales may yet tip in their favor!"
-      );
+    return await respond(ships.neverShipped404(true));
 
-  /* ships = number of ships with this moji */
-  type MojiVariant = { name: string, ships: number, sum: number };
-  const mojiVariants: MojiVariant[] = (() => {
-    /* now that we have the most popular emoji on each of their ships, we can do
-     * some more data analysis to rank the emoji across all of their ships, and
-     * tally up a total # of occurrences while we're at it */
-    const map: Map<string, number[]> = moji.reduce(
-      (ret, {name, count}) => {
-        const variant = ret.get(name) ?? [];
-        variant.push(count);
-        return ret.set(name, variant);
-      },
-      new Map()
-    );
-    /* the map was useful to handle repeats in an O(n) way, but what we really
-       want is a list we can sort to make a ranking */
-    return [...map.entries()]
-      .map(([name, perShip]) => ({ name, ships: perShip.length, sum: sum(perShip) }))
-      .sort((a, b) => b.sum - a.sum)
-      .sort((a, b) => b.ships - a.ships);
-  })();
-  const totalMaxReacts = sum(moji.map(r => r.count!));
+  let txt = "";
 
-  /* now to figure out which users most commonly react to your ships */
-  const fans: { user: string, ships: number }[] = (() => {
-    const map: Map<string, number> = moji.reduce(
-      (ret, react) => {
-        for (const fan of react.users!)
-          ret.set(fan, (ret.get(fan) ?? 0) + 1);
-        return ret;
-      },
-      new Map()
-    );
-    /* now we can make a ranking */
-    return [...map.entries()]
-      .map(([user, ships]) => ({ user, ships }))
-      .sort((a, b) => b.ships - a.ships);
-  })();
+  /* so acc starts with what you've earned from passgo previously, and as your messages
+   * are iterated through, acc approaches sum(moji.map(x => x.count)). (may exceed it
+   * because of fig bonuses) */
+  const startCents = sum([...account.ships.values()].map(x => x.size)) * 100;
+  let acc = startCents;
 
-  await respond((() => {
-    let txt = "";
-    txt += `the most popular reactions across all ${moji.length} `
-    txt += (user == null ? "" : `of ${user}'s `) + `<#${ids.ship}>s `;
-    txt += `*are worth ${totalMaxReacts}*:scales: in total.`;
-    for (const {name, sum, ships} of mojiVariants) {
-      txt += `\n${sum} :${name}: `;
-      if (ships > 1)
-        txt += `across ${ships} ships`;
-      else
-        txt += "on a single ship";
+  const overviewFigs: Figurine[] = [];
 
-      if (user != null && ships < 5) {
-        txt += " (";
-        txt += moji
-          .filter(x => x.name == name)
-          .map(({msg}, i) => {
-            return "<https://hackclub.slack.com/archives/C0M8PUPU6/p" +
-                   msg.replace(".", "") + "|" + (ships > 1 ? i+1 : "this one") + ">";
-          })
-          .join(", ");
-        txt += ")";
-      }
-    }
-    if (moji.length > 1) {
-      if (user == null)
-        txt += "\n*Globally, the top 5 ship reactors are:*";
-      else {
-        txt += "\n*" + (selfCall ? "Your " : (user + "'s "));
-        txt += `top ${Math.min(5, fans.length)} fans are:*`;
-      }
-      for (const {user, ships} of fans.slice(0, 5)) {
-        const ratio = parseFloat((ships/moji.length * 100).toFixed(1));
-        /* want to say "has added the most popular reaction to" but too many chars ... */
-        txt += `\n<@${user}>, reacted on ${ratio}%`;
+
+  const accAdd = (dollars: number, shipMsg: string, emoji: string, users: string[]) => {
+    /* every sc earned is another chance at earning a fig */
+    for (let i = 0; i < dollars; i++) {
+      const figs = figurineChance(account, acc, emoji, users);
+      if (figs.length > 0) {
+        for (const { kind, id } of figs) {
+          const idrep = kind == FigKind.Hacker ? normUserId(id) : (":"+id+":");
+          const kindrep = kind == FigKind.Hacker ? "" : "emoji "
+          txt += "\n*OMG YOU EARNED A FIGURINE!!!*" +
+            ` It's the ${idrep} ${kindrep}one!`;
+        }
+        overviewFigs.push(...figs);
       }
     }
 
-    return txt;
-  })());
-};
+    const usersOnRecord = account.ships.get(shipMsg) ?? new Set();
+    /* and figs increase the sc you earn (where applicable) */
+    for (const { kind, id } of account.figurines) {
+      /* so when someone reacts to a ship and the owner of that ship has a figurine of them,
+       * we need to award the ship's owner +5sc. We know that this is the first time that
+       * user reacted to that ship because we never overwrite account.ships.get(*).user, it
+       * only ever grows.
+       * 
+       * NOTE: theoretically, calling accAdd multiple times before updating account.ships could
+       *       overaward users. */
+      if (kind == FigKind.Hacker && users.includes(id) && !usersOnRecord.has(id))
+        acc += 500;
+
+      if (kind == FigKind.Emoji && emoji == id) {
+        const min = 35, max = 45;
+        acc += Math.round(min + (max - min) * Math.random());
+      }
+    }
+
+    acc += dollars * 100;
+  };
+
+  if (moji.every(x => x.count == account.ships.get(x.msg)))
+    return await respond(
+      "*No recent changes on your ships!*" +
+      " They're still worth " + ppcents(startCents) + ".\n" +
+      "Try /sc manifest to get some interesting data about your ships overall."
+    );
+
+  for (const {count, users, name, msg} of moji) {
+    const onRecord = account.ships.get(msg)?.size;
+    if (onRecord) {
+      /* nothing to alert you to if the ship & reacts haven't changed */
+      if (onRecord == count) continue;
+
+      accAdd(count! - onRecord, msg, name!, users!);
+      txt += "\nFound " + ships.link(msg, "More Reactions") + "!" +
+        ` *:${name}: ${onRecord}* ->` + ` *:${name}: ${acc}*!\n`;
+    } else {
+      const accB4 = acc;
+      accAdd(count!, msg, name!, users!);
+      txt += "\nFound " + ships.link(msg, "New Ship") + "!" + ` :${name}: ` +
+        ppcents(accB4) + " -> " + ppcents(acc);
+    }
+  }
+  account.ships = new Map(moji.map(x => {
+    const existing = account.ships.get(x.msg) ?? new Set();
+    return [
+      x.msg, 
+      /* prevents people from getting sc from adding and removing emoji
+       * also, same thing as above but with figurines */
+      new Set([...x.users!].concat(...existing)),
+    ];
+  }));
+  account.cents += Math.max(0, acc - startCents);
+
+  if (overviewFigs.length > 0) {
+    txt += "\n\n*You've earned ";
+    txt += (overviewFigs.length > 1)
+      ? (overviewFigs.length + " figurines")
+      : "a figurine";
+    txt += "!* Now, you will get more sc from reacts of the emoji or" +
+      " hack clubber the figurine represents. You can also trade or sell" +
+      " the figurine to other hackclubbers.";
+  }
+
+  txt += "\n\n_Overview: " + ppcents(startCents) + " -> " +
+    ppcents(acc) + "_";
+
+  await respond(txt);
+  writeBank();
+}
