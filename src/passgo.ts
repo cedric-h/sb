@@ -31,7 +31,7 @@ const figurineChance = (account: Account, acc: number, emoji: string, users: str
 }
 
 export default async (app: App, respond: RespondFn, user: string) => {
-  const account = getAccount(user);
+  const account = await getAccount(app, user);
   const moji = (await ships.moji(app)).get(user) ?? [];
   /* slack uses timestamps as ids */
   moji.sort((a, b) => parseFloat(a.msg) - parseFloat(b.msg));
