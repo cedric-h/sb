@@ -1,11 +1,11 @@
 import { App } from '@slack/bolt';
 import { Reaction } from "@slack/web-api/dist/response/ConversationsHistoryResponse";
 import { RespondFn } from "@slack/bolt/dist/types/utilities";
-import { Figurine, FigKind, writeBank, ppcents, getAccount, Account } from "./account";
-import * as ships from "./ships";
-import { normUserId, sum } from "./utils";
+import { Figurine, FigKind, writeBank, ppcents, getAccount, Account } from "./account.mjs";
+import * as ships from "./ships.mjs";
+import { normUserId, sum } from "./utils.mjs";
 
-/* this file's dependency on account.ts and manifest.ts is ... primarily
+/* this file's dependency on account.ts and ships.ts is ... primarily
  * a historical artifact, probably. if it turns out harmful, it can easily
  * be remedied in a subsequent reorganization. not sure why it would though?
  *
@@ -87,11 +87,11 @@ export default async (app: App, respond: RespondFn, user: string) => {
     acc += dollars * 100;
   };
 
-  if (moji.every(x => x.count == account.ships.get(x.msg)))
+  if (moji.every(x => x.count == account.ships.get(x.msg)?.size))
     return await respond(
       "*No recent changes on your ships!*" +
       " They're still worth " + ppcents(startCents) + ".\n" +
-      "Try /sc manifest to get some interesting data about your ships overall."
+      "Try /sc ships to get some interesting data about your ships overall."
     );
 
   for (const {count, users, name, msg} of moji) {

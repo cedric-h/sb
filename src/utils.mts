@@ -29,9 +29,9 @@ export const isUserId = (id: string) => {
 
 /* handles [de]serializing data that might contain maps */
 export const serialize = (x: any) => JSON.stringify(x, (_, v) => {
-  if (v.__proto__ == Map.prototype)
+  if (v && v.__proto__ == Map.prototype)
     return { "__prototype__": "Map", "data": Object.fromEntries(v.entries()) };
-  if (v.__proto__ == Set.prototype)
+  if (v && v.__proto__ == Set.prototype)
     return { "__prototype__": "Set", "data": [...v] };
   return v;
 });

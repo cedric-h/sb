@@ -1,8 +1,8 @@
-import { sum, serialize, deserialize, normUserId, ids } from "./utils";
+import { sum, serialize, deserialize, normUserId, ids } from "./utils.mjs";
 import { Reaction } from "@slack/web-api/dist/response/ConversationsHistoryResponse";
 import { RespondFn } from "@slack/bolt/dist/types/utilities";
 import { App } from "@slack/bolt";
-import fs from "fs";
+import * as fs from "fs";
 
 /* we're taking reactions out of the context of their original message,
  * so there's some of that context that we need to save */

@@ -1,17 +1,17 @@
 {
   "scripts": {
     "build": "tsc -p . && rsync -rvzP -e \"ssh -p 7822 -i ~/.ssh/id_ed25519.pub\" --delete ./out root@misguided.enterprises:scales",
-    "watch": "nodemon -w ./src/ --exec \"npm run build\" --ext ts,json"
+    "watch": "nodemon -w ./src/ --exec \"npm run build\" --ext ts,mts,json"
   },
   "devDependencies": {
     "@types/express": "^4.17.13",
-    "@types/node": "^16.11.7",
-    "typescript": "^4.6.0-dev.20211202"
+    "@types/node": "^16.11.7"
   },
   "dependencies": {
     "@slack/bolt": "^3.8.1",
     "express": "^4.17.1",
     "nanoid": "^3.1.30",
+    "node-fetch": "^3.1.0",
     "ts-custom-error": "^3.2.0"
   }
 }

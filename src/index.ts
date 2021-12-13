@@ -1,10 +1,12 @@
-import { normUserId, isUserId, BadInput, fullIdRegex } from "./utils";
-import { token, signingSecret } from "./auth.json";
-import { shipsCmd } from "./ships";
-import passgo from "./passgo";
-import * as account from "./account";
-import { App, ExpressReceiver, directMention } from '@slack/bolt';
+import { deserialize, normUserId, isUserId, BadInput, fullIdRegex } from "./utils.mjs";
+import { shipsCmd } from "./ships.mjs";
+import passgo from "./passgo.mjs";
+import * as account from "./account.mjs";
+import * as fs from 'fs';
+const { App, ExpressReceiver } = (await import('@slack/bolt') as any).default as typeof import("@slack/bolt");
 import { SlackCommandMiddlewareArgs } from "@slack/bolt/dist/types/command";
+
+const { token, signingSecret } = deserialize(fs.readFileSync("./auth.json", "utf-8"));
 
 /* init slack conn */
 const receiver = new ExpressReceiver({ signingSecret});
@@ -32,20 +34,26 @@ usage:
     const { message_ts, channel_id } = (body as any).container;
     await app.client.chat.delete({ channel: channel_id, ts: message_ts });
   });
+  app.action('revoke_hook', account.revokeHook);
 
   app.event(/^app_mention|message$/, async args => {
     const say = args.say;
     if (['user', 'text'].some(x => !args.event.hasOwnProperty(x))) return;
     const { user, text: msgTxt } = args.event as any;
 
-    const match = msgTxt.match(/^<@U02M5Q2JWKF> my puppetmaster is <@([A-Za-z0-9]+)(?:|.+)?>$/);
+    console.log(msgTxt);
+    const match = msgTxt.match(/^<@U02M5Q2JWKF(?:\|moneyduck)?> my puppetmaster <@([A-Za-z0-9]+)(?:\|.+)?> wants my endpoint to be <(.+)>$/);
     if (!match) return void await say("huh?");
+    if (!/^https:\/\//.test(match[2]))
+      return void await say("Uh, https only, sorry (for security, like Slack)");
 
-    const [owner, bot] = [match[1]!, user!].map(normUserId);
-    await say(`o rly? ok i'll dm ${owner} ur token then ;)`);
+    const [ownerId, botId] = [match[1]!, user!].map(normUserId);
+    await say(`o rly? ok i'll dm ${ownerId} ur token then ;)`);
 
-    const { id, prevOwner } = account.makeApiToken({ owner, bot });
-    const text = `${bot}'s token is ${id}` +
+    const { token, prevOwner } = await account.makeApiToken(
+      app, { ownerId, botId, endpointUrl: match[2] }
+    );
+    const text = `${botId}'s token is ${token}` +
       '\n*keep it somewhere safe!*' +
       '\nit allows full programmatic access to all of your sc & figs!' +
       (prevOwner ? `\n(overwriting token previously registered by ${prevOwner})` : '');
@@ -68,8 +76,13 @@ usage:
     console.log(`${command.user_id} ran /sc ${command.text}`);
 
     /* could probably reorganize all this weird input handling stuff as middleware? */
-    const [cmd, user = command.user_id, amt] = command.text.trim().split(/\s+/);
+    const [cmd, user = command.user_id, amt, _for, whatFor] = command.text.trim().split(/\s+/);
     const selfCall = isUserId(user) && normUserId(command.user_id) == normUserId(user);
+
+    if (_for != "for" && _for != undefined)
+      throw new BadInput("Expected for, found: " + _for);
+    if (_for == "for" && whatFor == undefined)
+      throw new BadInput("Expected word following for");
 
     switch (cmd) {
       case "ships":
@@ -93,13 +106,14 @@ usage:
           fig = { kind: account.FigKind.Hacker, id: match[1] };
 
         if (!fig) throw new BadInput("Expected emoji or ping, got: " + amt);
-        return await account.givefigCmd(app, respond, fromId, toId, fig);
+        return await account.givefigCmd(app, respond, fromId, toId, fig, whatFor);
       }
       case "pay": {
         if (amt == undefined)
           throw new BadInput("Desired transaction amount not provided");
         const [fromId, toId] = [command.user_id, user].map(normUserId);
-        return await account.payCmd(app, respond, fromId, toId, parseFloat(amt) * 100 + "");
+        const cents = parseFloat(amt) * 100 + "";
+        return await account.payCmd(app, respond, fromId, toId, cents, whatFor);
       }
       default:
         return await respond(help);
@@ -108,14 +122,11 @@ usage:
 
   function forwardErrToUser(fn: (args: SlackCommandMiddlewareArgs) => Promise<any>) {
     return async (args: SlackCommandMiddlewareArgs) => {
-      try { await fn(args); }
-      catch(e) {
-        await args.respond(
-          (e instanceof BadInput)
-            ? ("Bad Input: " + e.message)
-            : (console.error(e), "Bot Internals: " + e)
-        );
-      }
+      fn(args).catch(e => args.respond(
+        (e instanceof BadInput)
+          ? ("Bad Input: " + e.message)
+          : (console.error(e), "Bot Internals: " + e)
+      ));
     }
   }
 
