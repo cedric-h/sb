@@ -8,6 +8,29 @@ export const sum = (arr: number[]) => arr.reduce((a, x) => a + x, 0);
 
 export class BadInput extends CustomError {}
 
+export const levelNames: string[] = (
+    "Lamella Egg Skink Eosinopteryx Salamander Common_Lizard Komodo Crocodile" +
+    " Dimetrodon Triceratops Stegosaurus Pterodactyl Wyvern Brontosaurus Dragon Hydra" +
+    " Tyrannosaurus_Rex Gallus_gallus_domesticus Orpheus"
+  ).split(' ').map(x => x.replace(/_/g, " "));
+export const levelXp: number[] = [
+  0, 1.25e3, 4.9e3, 1.44e4, 5.6e4, 2.1e5, 8.1e5, 3.2e6, 9.7e8, 1.27e7,
+  5.0e7, 1.88e8, 666666661, 2.3e9, 9.9e9, 4.3e10, 8.2e10, 1.1e11, 7.3e11, 1.0e12
+];
+export const xpData = (xp: number) => {
+  let i; for (i = 0; xp >= levelXp[i]; i++);
+  return {
+    levelNeedsTotal: levelXp[i],
+    goal: levelXp[i] - levelXp[i - 1],
+    prog: xp - levelXp[i - 1],
+    levelName: levelNames[i - 1],
+    index: i,
+  };
+};
+export const progBar = (size: number, ratio: number) => "`\u{2062}" +
+  [...Array(size)].map((_, i) => i/size < ratio ? '\u{2588}' : ' ').join('') +
+  "\u{2062}`";
+
 /* turns a string into a valid user id or throws an error */
 export const fullIdRegex = /^<@([a-zA-Z0-9]+)(?:\|.+)?>$/;
 export const normUserId = (id: string) => {

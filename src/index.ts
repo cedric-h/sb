@@ -1,4 +1,4 @@
-import { deserialize, normUserId, isUserId, BadInput, fullIdRegex } from "./utils.mjs";
+import { deserialize, normUserId, isUserId, BadInput, fullIdRegex, levelNames } from "./utils.mjs";
 import { shipsCmd } from "./ships.mjs";
 import passgo from "./passgo.mjs";
 import * as account from "./account.mjs";
@@ -18,12 +18,33 @@ const help = `_:sc: sc, or scalecoin, is a \
 <https://github.com/cedric-h/sb|community run> \
 currency. collect all the scales to become one with orpheus. :orpheus:_
 
-usage:
-\`/sc passgo\` collect funds from your ships. *start here!*
+get sc:
+\`/sc passgo\` collect goodies from your ships. *start here!* :hc-gold:
+
+transactions:
 \`/sc bal [USER]\` see how much money \`[USER]\` has. omit \`[USER]\` to see your own.
 \`/sc pay USER AMT\` removes \`AMT\` from your account and places it in \`USER\`'s.
 \`/sc givefig USER FIG\` like \`sc pay\`, but for figurines. FIG can be an emoji or ping.
+
+info:
 \`/sc ships [USER]\` to see a neat compilation of \`[USER]\`'s ship data.
+\`/sc faq\` *see answers to some commonly asked questions about sc.*
+`;
+
+const faq = `
+*how does /sc passgo work, anyway?* you get one sc for each reaction on your ship of the most popular variety. there's also a small chance per reaction to get a figurine of the emoji that's being reacted with or the hack clubber (yes, a figurine of a hacker clubber!) who is doing the reacting. if someone adds more reactions to your ships, you can just run \`/sc passgo\` again, and it will award you more sc/figurines accordingly.
+
+*how does the xp system work?* (WIP) whenever you make a transaction, you gain some xp, as well as some heat. your xp stays forever, but the heat fades away gradually. the hotter your account is, the less xp your earn per transaction. trading with people you haven't before gives you more xp than anything else. the higher level your account is, the more heat it can handle before you start getting very little xp per transaction. obviously you could probably automate xp grinding, but there's no real reason to, since having a higher level doesn't get you anything. it's just an informal indication of how "into" sc someone is.
+
+*what's the complete list of level names?* ${levelNames.join(", ")}
+
+*can I add more level names?* sure, <https://github.com/cedric-h/sc|PRs welcome!>
+
+*where can I buy/sell figurines?* try \`/figmp\` :)
+
+*why isn't figmp built into sc?* figmp was made to dogfeed the sc API. figmp doesn't make money out of thin air or do anything that any other sc bot can't already do. it's an example of how sc is something any hack clubber can extend :)
+
+
 `;
 
 (async () => {
@@ -76,7 +97,9 @@ usage:
     console.log(`${command.user_id} ran /sc ${command.text}`);
 
     /* could probably reorganize all this weird input handling stuff as middleware? */
-    const [cmd, user = command.user_id, amt, _for, whatFor] = command.text.trim().split(/\s+/);
+    const text = command.text.trim().replace(/\*/, '').split(/\s+/);
+    const [cmd, user = command.user_id, amt, _for, ...rest] = text;
+    const whatFor = rest.join(' ');
     const selfCall = isUserId(user) && normUserId(command.user_id) == normUserId(user);
 
     if (_for != "for" && _for != undefined)
@@ -87,6 +110,8 @@ usage:
     switch (cmd) {
       case "ships":
         return await shipsCmd(app, respond, user, selfCall);
+      case "faq":
+        return await respond(faq);
       case "passgo": {
         if (command.text.trim().slice("passgo".length) != "")
           throw new BadInput("passgo takes no args.");

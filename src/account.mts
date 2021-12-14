@@ -6,7 +6,8 @@ import { App, ExpressReceiver } from '@slack/bolt';
 const { App: RuntimeApp } = (await import('@slack/bolt') as any).default as typeof import("@slack/bolt");
 import { WebClient } from "@slack/web-api";
 import { RespondFn } from "@slack/bolt/dist/types/utilities";
-import { BadInput, serialize, deserialize, normUserId, stripId, sum } from "./utils.mjs";
+import { BadInput, serialize, deserialize, normUserId, stripId,
+         sum, xpData, progBar } from "./utils.mjs";
 import * as fs from "fs";
 
 const bankfile = "../bankfile.json";
@@ -48,6 +49,9 @@ export type Figurine = {
 
 type Hook = { centsOrFig: number | Figurine, hooked: string, hooker: string, desc: string };
 export type Account = {
+  xp: number;
+  heat: number;
+  lastXp: number;
   cents: number;
   hooks: Map<string, Hook>;
   contacts: Map<string, Contact>;
@@ -57,12 +61,24 @@ export type Account = {
   botToken?: string;
 };
 export const blankAccount: () => Account = () => ({
+  xp: 0,
+  heat: 0,
+  lastXp: Date.now(),
   cents: 0,
   hooks: new Map(),
   contacts: new Map(),
   ships: new Map(),
   figurines: [],
 });
+const addAccountXp = (account: Account, xp: number) => {
+  /* heat cools off at one cent per second */
+  account.heat -= Math.floor((Date.now() - account.lastXp) / 1000);
+  account.lastXp = Date.now();
+  account.heat += xp;
+
+  const boost = xp * Math.max(0.1, 1.0 - (xp / (xpData(xp).levelNeedsTotal / 100)));
+  account.xp = Math.floor(account.xp + boost)
+}
 const contactSend = (account: Account, toId: string, cents: number) => {
   const contact = account.contacts.get(toId) ?? blankContact();
   contact.transactionsSentTo++;
@@ -111,7 +127,10 @@ export const goblinstompCmd = async (respond: RespondFn, user: string) => {
 export const balCmd = async (app: App, respond: RespondFn, user: string, selfCall: boolean) => {
   const account = await getAccount(app, user);
 
-  let txt = `${selfCall ? "You have" : user + " has"} ${ppcents(account.cents)} available.\n`;
+  const { prog, goal, levelName, index } = xpData(account.xp);
+  let txt = `${progBar(50, prog/goal)}\n*${levelName}* (_Level ${index}_): ${prog}/${goal}xp\n\n`;
+
+  txt += `${selfCall ? "You have" : user + " has"} ${ppcents(account.cents)} available.\n`;
   if (account.contacts.size > 3) {
     txt += "\n";
     const contacts = [...account.contacts.entries()];
@@ -292,6 +311,12 @@ const pay = async (
         ? ` (before hooks, it'd be ${ppcents(sender.cents)}, so maybe revoke some)`
         : '')
     );
+
+  for (const [account, otherId] of [[sender, receiverId], [receiver, senderId]] as const) {
+    if (!account.contacts.has(otherId))
+      addAccountXp(account, 1000);
+    addAccountXp(account, 100 + Math.min(100, cents/1000));
+  }
 
   contactSend(sender, receiverId, cents);
   contactReceive(receiver, senderId, cents);
